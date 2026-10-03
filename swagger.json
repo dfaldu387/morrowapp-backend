@@ -1,0 +1,633 @@
+{
+  "openapi": "3.0.0",
+  "info": {
+    "title": "Morrow API",
+    "description": "Morrow Habit Tracker — Backend API Documentation",
+    "version": "1.0.0"
+  },
+  "servers": [
+    { "url": "http://localhost:3000", "description": "Local Development" }
+  ],
+  "components": {
+    "securitySchemes": {
+      "BearerAuth": {
+        "type": "http",
+        "scheme": "bearer",
+        "bearerFormat": "JWT"
+      }
+    },
+    "schemas": {
+      "User": {
+        "type": "object",
+        "properties": {
+          "id": { "type": "string", "format": "uuid" },
+          "name": { "type": "string" },
+          "email": { "type": "string" },
+          "createdAt": { "type": "string", "format": "date-time" }
+        }
+      },
+      "AuthResponse": {
+        "type": "object",
+        "properties": {
+          "user": { "$ref": "#/components/schemas/User" },
+          "token": { "type": "string" }
+        }
+      },
+      "Habit": {
+        "type": "object",
+        "properties": {
+          "id": { "type": "string", "format": "uuid" },
+          "name": { "type": "string" },
+          "color": { "type": "string" },
+          "emoji": { "type": "string" },
+          "category": { "type": "string" },
+          "schedule": { "type": "array", "items": { "type": "integer" }, "description": "0=Mon...6=Sun, empty=every day" },
+          "goalType": { "type": "string", "enum": ["daily", "weekly", "monthly"] },
+          "goalTarget": { "type": "integer" },
+          "streakGoal": { "type": "integer" },
+          "routine": { "type": "string", "enum": ["morning", "evening", "none"] },
+          "archived": { "type": "boolean" },
+          "sortOrder": { "type": "integer" },
+          "createdAt": { "type": "string", "format": "date-time" },
+          "completedDates": { "type": "array", "items": { "type": "string", "format": "date" } },
+          "notes": { "type": "object", "additionalProperties": { "type": "string" } },
+          "streakFreezes": { "type": "array", "items": { "type": "string", "format": "date" } }
+        }
+      },
+      "Settings": {
+        "type": "object",
+        "properties": {
+          "viewMode": { "type": "string", "enum": ["cards", "checklist", "compact"] },
+          "selectedCategory": { "type": "string" },
+          "showCompletedToday": { "type": "boolean" },
+          "themeMode": { "type": "string", "enum": ["light", "dark"] },
+          "weekStartDay": { "type": "string", "enum": ["monday", "sunday"] },
+          "hapticFeedback": { "type": "boolean" },
+          "remindersEnabled": { "type": "boolean" },
+          "reminderTime": { "type": "string", "example": "09:00" },
+          "autoTheme": { "type": "boolean" }
+        }
+      },
+      "Achievement": {
+        "type": "object",
+        "properties": {
+          "id": { "type": "string" },
+          "name": { "type": "string" },
+          "emoji": { "type": "string" },
+          "description": { "type": "string" },
+          "unlocked": { "type": "boolean" },
+          "unlockedAt": { "type": "string", "format": "date-time", "nullable": true }
+        }
+      },
+      "ChatMessage": {
+        "type": "object",
+        "properties": {
+          "id": { "type": "string", "format": "uuid" },
+          "text": { "type": "string" },
+          "isUser": { "type": "boolean" },
+          "timestamp": { "type": "string", "format": "date-time" }
+        }
+      },
+      "Notification": {
+        "type": "object",
+        "properties": {
+          "id": { "type": "string", "format": "uuid" },
+          "title": { "type": "string" },
+          "body": { "type": "string" },
+          "type": { "type": "string" },
+          "read": { "type": "boolean" },
+          "data": { "type": "object", "nullable": true },
+          "createdAt": { "type": "string", "format": "date-time" }
+        }
+      }
+    }
+  },
+  "paths": {
+    "/api/health": {
+      "get": {
+        "tags": ["Health"],
+        "summary": "Health check",
+        "responses": {
+          "200": {
+            "description": "Server is running",
+            "content": { "application/json": { "schema": { "type": "object", "properties": { "status": { "type": "string" }, "timestamp": { "type": "string" } } } } }
+          }
+        }
+      }
+    },
+    "/api/auth/signup": {
+      "post": {
+        "tags": ["Auth"],
+        "summary": "Register a new account",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": ["name", "email", "password"],
+                "properties": {
+                  "name": { "type": "string", "example": "John Doe" },
+                  "email": { "type": "string", "example": "john@example.com" },
+                  "password": { "type": "string", "example": "pass123", "minLength": 6 }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": { "description": "Account created", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/AuthResponse" } } } },
+          "400": { "description": "Missing fields or short password" },
+          "409": { "description": "Email already exists" }
+        }
+      }
+    },
+    "/api/auth/login": {
+      "post": {
+        "tags": ["Auth"],
+        "summary": "Login with email and password",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": ["email", "password"],
+                "properties": {
+                  "email": { "type": "string", "example": "john@example.com" },
+                  "password": { "type": "string", "example": "pass123" }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": { "description": "Login successful", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/AuthResponse" } } } },
+          "401": { "description": "Invalid email or password" }
+        }
+      }
+    },
+    "/api/auth/guest": {
+      "post": {
+        "tags": ["Auth"],
+        "summary": "Login as guest",
+        "responses": {
+          "201": { "description": "Guest account created", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/AuthResponse" } } } }
+        }
+      }
+    },
+    "/api/users/me": {
+      "get": {
+        "tags": ["User"],
+        "summary": "Get current user profile",
+        "security": [{ "BearerAuth": [] }],
+        "responses": {
+          "200": { "description": "User profile", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/User" } } } },
+          "401": { "description": "Unauthorized" }
+        }
+      },
+      "put": {
+        "tags": ["User"],
+        "summary": "Update profile (name/email)",
+        "security": [{ "BearerAuth": [] }],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "name": { "type": "string" },
+                  "email": { "type": "string" }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": { "description": "Updated profile", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/User" } } } }
+        }
+      },
+      "delete": {
+        "tags": ["User"],
+        "summary": "Delete account",
+        "security": [{ "BearerAuth": [] }],
+        "responses": {
+          "200": { "description": "Account deleted" }
+        }
+      }
+    },
+    "/api/users/me/password": {
+      "put": {
+        "tags": ["User"],
+        "summary": "Change password",
+        "security": [{ "BearerAuth": [] }],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": ["currentPassword", "newPassword"],
+                "properties": {
+                  "currentPassword": { "type": "string" },
+                  "newPassword": { "type": "string", "minLength": 6 }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": { "description": "Password updated" },
+          "401": { "description": "Current password incorrect" }
+        }
+      }
+    },
+    "/api/habits": {
+      "get": {
+        "tags": ["Habits"],
+        "summary": "Get all habits",
+        "security": [{ "BearerAuth": [] }],
+        "responses": {
+          "200": { "description": "List of habits", "content": { "application/json": { "schema": { "type": "array", "items": { "$ref": "#/components/schemas/Habit" } } } } }
+        }
+      },
+      "post": {
+        "tags": ["Habits"],
+        "summary": "Create a new habit",
+        "security": [{ "BearerAuth": [] }],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": ["name"],
+                "properties": {
+                  "name": { "type": "string", "example": "Drink Water" },
+                  "emoji": { "type": "string", "example": "💧" },
+                  "color": { "type": "string", "example": "#4FC3F7" },
+                  "category": { "type": "string", "example": "Health" },
+                  "schedule": { "type": "array", "items": { "type": "integer" }, "example": [0, 1, 2, 3, 4] },
+                  "goalType": { "type": "string", "enum": ["daily", "weekly", "monthly"] },
+                  "goalTarget": { "type": "integer", "example": 1 },
+                  "streakGoal": { "type": "integer", "example": 21 },
+                  "routine": { "type": "string", "enum": ["morning", "evening", "none"] }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": { "description": "Habit created", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Habit" } } } }
+        }
+      }
+    },
+    "/api/habits/reorder": {
+      "put": {
+        "tags": ["Habits"],
+        "summary": "Reorder habits",
+        "security": [{ "BearerAuth": [] }],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": ["orderedIds"],
+                "properties": {
+                  "orderedIds": { "type": "array", "items": { "type": "string", "format": "uuid" } }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": { "description": "Habits reordered" }
+        }
+      }
+    },
+    "/api/habits/{id}": {
+      "get": {
+        "tags": ["Habits"],
+        "summary": "Get a single habit",
+        "security": [{ "BearerAuth": [] }],
+        "parameters": [{ "name": "id", "in": "path", "required": true, "schema": { "type": "string", "format": "uuid" } }],
+        "responses": {
+          "200": { "description": "Habit details", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Habit" } } } },
+          "404": { "description": "Habit not found" }
+        }
+      },
+      "put": {
+        "tags": ["Habits"],
+        "summary": "Update a habit",
+        "security": [{ "BearerAuth": [] }],
+        "parameters": [{ "name": "id", "in": "path", "required": true, "schema": { "type": "string", "format": "uuid" } }],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "name": { "type": "string" },
+                  "emoji": { "type": "string" },
+                  "color": { "type": "string" },
+                  "category": { "type": "string" },
+                  "schedule": { "type": "array", "items": { "type": "integer" } },
+                  "goalType": { "type": "string" },
+                  "goalTarget": { "type": "integer" },
+                  "streakGoal": { "type": "integer" },
+                  "routine": { "type": "string" },
+                  "archived": { "type": "boolean" }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": { "description": "Habit updated", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Habit" } } } }
+        }
+      },
+      "delete": {
+        "tags": ["Habits"],
+        "summary": "Delete a habit",
+        "security": [{ "BearerAuth": [] }],
+        "parameters": [{ "name": "id", "in": "path", "required": true, "schema": { "type": "string", "format": "uuid" } }],
+        "responses": {
+          "200": { "description": "Habit deleted" }
+        }
+      }
+    },
+    "/api/habits/{id}/toggle": {
+      "post": {
+        "tags": ["Habits"],
+        "summary": "Toggle habit completion for a date",
+        "security": [{ "BearerAuth": [] }],
+        "parameters": [{ "name": "id", "in": "path", "required": true, "schema": { "type": "string", "format": "uuid" } }],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": ["date"],
+                "properties": {
+                  "date": { "type": "string", "format": "date", "example": "2026-10-02" }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": { "description": "Toggled", "content": { "application/json": { "schema": { "type": "object", "properties": { "completed": { "type": "boolean" }, "date": { "type": "string" } } } } } }
+        }
+      }
+    },
+    "/api/habits/{id}/note": {
+      "put": {
+        "tags": ["Habits"],
+        "summary": "Set or clear a note for a date",
+        "security": [{ "BearerAuth": [] }],
+        "parameters": [{ "name": "id", "in": "path", "required": true, "schema": { "type": "string", "format": "uuid" } }],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": ["date"],
+                "properties": {
+                  "date": { "type": "string", "format": "date" },
+                  "note": { "type": "string" }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": { "description": "Note updated" }
+        }
+      }
+    },
+    "/api/habits/{id}/freeze": {
+      "post": {
+        "tags": ["Habits"],
+        "summary": "Use a streak freeze for a date",
+        "security": [{ "BearerAuth": [] }],
+        "parameters": [{ "name": "id", "in": "path", "required": true, "schema": { "type": "string", "format": "uuid" } }],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": ["date"],
+                "properties": {
+                  "date": { "type": "string", "format": "date" }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": { "description": "Streak freeze applied" }
+        }
+      }
+    },
+    "/api/settings": {
+      "get": {
+        "tags": ["Settings"],
+        "summary": "Get user settings",
+        "security": [{ "BearerAuth": [] }],
+        "responses": {
+          "200": { "description": "User settings", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Settings" } } } }
+        }
+      },
+      "put": {
+        "tags": ["Settings"],
+        "summary": "Update user settings",
+        "security": [{ "BearerAuth": [] }],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": { "$ref": "#/components/schemas/Settings" }
+            }
+          }
+        },
+        "responses": {
+          "200": { "description": "Settings updated", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Settings" } } } }
+        }
+      }
+    },
+    "/api/achievements": {
+      "get": {
+        "tags": ["Achievements"],
+        "summary": "Get all achievements with unlock status",
+        "security": [{ "BearerAuth": [] }],
+        "responses": {
+          "200": { "description": "List of achievements", "content": { "application/json": { "schema": { "type": "array", "items": { "$ref": "#/components/schemas/Achievement" } } } } }
+        }
+      }
+    },
+    "/api/achievements/unlock": {
+      "post": {
+        "tags": ["Achievements"],
+        "summary": "Manually unlock an achievement",
+        "security": [{ "BearerAuth": [] }],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": ["achievementId"],
+                "properties": {
+                  "achievementId": { "type": "string", "example": "first_step" }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": { "description": "Achievement unlocked" }
+        }
+      }
+    },
+    "/api/achievements/check": {
+      "post": {
+        "tags": ["Achievements"],
+        "summary": "Auto-check and unlock earned achievements",
+        "security": [{ "BearerAuth": [] }],
+        "responses": {
+          "200": { "description": "Newly unlocked achievements", "content": { "application/json": { "schema": { "type": "object", "properties": { "newlyUnlocked": { "type": "array", "items": { "$ref": "#/components/schemas/Achievement" } } } } } } }
+        }
+      }
+    },
+    "/api/ai-coach/history": {
+      "get": {
+        "tags": ["AI Coach"],
+        "summary": "Get chat history (last 7 days)",
+        "security": [{ "BearerAuth": [] }],
+        "parameters": [
+          { "name": "limit", "in": "query", "schema": { "type": "integer", "default": 50 } },
+          { "name": "offset", "in": "query", "schema": { "type": "integer", "default": 0 } }
+        ],
+        "responses": {
+          "200": { "description": "Chat messages", "content": { "application/json": { "schema": { "type": "array", "items": { "$ref": "#/components/schemas/ChatMessage" } } } } }
+        }
+      },
+      "delete": {
+        "tags": ["AI Coach"],
+        "summary": "Clear all chat history",
+        "security": [{ "BearerAuth": [] }],
+        "responses": {
+          "200": { "description": "Chat history cleared" }
+        }
+      }
+    },
+    "/api/ai-coach/message": {
+      "post": {
+        "tags": ["AI Coach"],
+        "summary": "Send a message to Ducky Coach",
+        "security": [{ "BearerAuth": [] }],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": ["message"],
+                "properties": {
+                  "message": { "type": "string", "example": "How am I doing?" }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": { "description": "AI response", "content": { "application/json": { "schema": { "type": "object", "properties": { "text": { "type": "string" }, "suggestions": { "type": "array", "items": { "type": "object", "properties": { "id": { "type": "string" }, "name": { "type": "string" }, "emoji": { "type": "string" } } }, "nullable": true } } } } } }
+        }
+      }
+    },
+    "/api/notifications": {
+      "get": {
+        "tags": ["Notifications"],
+        "summary": "Get all notifications",
+        "security": [{ "BearerAuth": [] }],
+        "parameters": [
+          { "name": "limit", "in": "query", "schema": { "type": "integer", "default": 50 } },
+          { "name": "offset", "in": "query", "schema": { "type": "integer", "default": 0 } }
+        ],
+        "responses": {
+          "200": { "description": "List of notifications", "content": { "application/json": { "schema": { "type": "array", "items": { "$ref": "#/components/schemas/Notification" } } } } }
+        }
+      },
+      "post": {
+        "tags": ["Notifications"],
+        "summary": "Create a notification",
+        "security": [{ "BearerAuth": [] }],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": ["title", "body"],
+                "properties": {
+                  "title": { "type": "string", "example": "Streak Alert!" },
+                  "body": { "type": "string", "example": "7 day streak!" },
+                  "type": { "type": "string", "example": "streak" },
+                  "data": { "type": "object", "nullable": true }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": { "description": "Notification created", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Notification" } } } }
+        }
+      }
+    },
+    "/api/notifications/unread-count": {
+      "get": {
+        "tags": ["Notifications"],
+        "summary": "Get unread notification count",
+        "security": [{ "BearerAuth": [] }],
+        "responses": {
+          "200": { "description": "Unread count", "content": { "application/json": { "schema": { "type": "object", "properties": { "count": { "type": "integer" } } } } } }
+        }
+      }
+    },
+    "/api/notifications/read-all": {
+      "put": {
+        "tags": ["Notifications"],
+        "summary": "Mark all notifications as read",
+        "security": [{ "BearerAuth": [] }],
+        "responses": {
+          "200": { "description": "All marked as read" }
+        }
+      }
+    },
+    "/api/notifications/{id}/read": {
+      "put": {
+        "tags": ["Notifications"],
+        "summary": "Mark a notification as read",
+        "security": [{ "BearerAuth": [] }],
+        "parameters": [{ "name": "id", "in": "path", "required": true, "schema": { "type": "string", "format": "uuid" } }],
+        "responses": {
+          "200": { "description": "Notification marked as read", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Notification" } } } }
+        }
+      }
+    },
+    "/api/notifications/{id}": {
+      "delete": {
+        "tags": ["Notifications"],
+        "summary": "Delete a notification",
+        "security": [{ "BearerAuth": [] }],
+        "parameters": [{ "name": "id", "in": "path", "required": true, "schema": { "type": "string", "format": "uuid" } }],
+        "responses": {
+          "200": { "description": "Notification deleted" }
+        }
+      }
+    }
+  }
+}
