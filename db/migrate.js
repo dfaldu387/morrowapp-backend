@@ -96,6 +96,25 @@ const migration = `
     created_at    TIMESTAMPTZ DEFAULT NOW()
   );
 
+  -- Categories (admin-managed)
+  CREATE TABLE IF NOT EXISTS categories (
+    id            UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    name          VARCHAR(100) NOT NULL UNIQUE,
+    emoji         VARCHAR(10) NOT NULL DEFAULT '📌',
+    is_active     BOOLEAN DEFAULT TRUE,
+    sort_order    INTEGER DEFAULT 0,
+    created_at    TIMESTAMPTZ DEFAULT NOW()
+  );
+
+  -- User selected categories (onboarding)
+  CREATE TABLE IF NOT EXISTS user_categories (
+    id            UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    user_id       UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    category_id   UUID NOT NULL REFERENCES categories(id) ON DELETE CASCADE,
+    created_at    TIMESTAMPTZ DEFAULT NOW(),
+    UNIQUE(user_id, category_id)
+  );
+
   -- Indexes
   CREATE INDEX IF NOT EXISTS idx_habits_user_id ON habits(user_id);
   CREATE INDEX IF NOT EXISTS idx_habit_completions_habit_id ON habit_completions(habit_id);
@@ -104,6 +123,8 @@ const migration = `
   CREATE INDEX IF NOT EXISTS idx_notifications_user_id ON notifications(user_id);
   CREATE INDEX IF NOT EXISTS idx_ai_chat_user_id ON ai_chat_messages(user_id);
   CREATE INDEX IF NOT EXISTS idx_user_achievements_user_id ON user_achievements(user_id);
+  CREATE INDEX IF NOT EXISTS idx_user_categories_user_id ON user_categories(user_id);
+  CREATE INDEX IF NOT EXISTS idx_categories_active ON categories(is_active);
 `;
 
 async function migrate() {

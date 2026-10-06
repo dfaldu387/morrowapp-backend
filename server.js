@@ -35,6 +35,7 @@ app.use('/api/settings', require('./routes/settings'));
 app.use('/api/achievements', require('./routes/achievements'));
 app.use('/api/ai-coach', require('./routes/aiCoach'));
 app.use('/api/notifications', require('./routes/notifications'));
+app.use('/api/categories', require('./routes/categories'));
 
 // Health check
 app.get('/api/health', (req, res) => {
