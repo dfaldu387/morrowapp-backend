@@ -2,11 +2,38 @@ const pool = require('../config/database');
 const OpenAI = require('openai');
 
 const HISTORY_RETENTION_DAYS = 7;
+const FREE_MESSAGE_LIMIT = 5;
+const SUBSCRIBER_MESSAGE_LIMIT = 50;
 
 // Initialize OpenAI client (only if API key is configured)
 const openai = process.env.OPENAI_API_KEY
   ? new OpenAI({ apiKey: process.env.OPENAI_API_KEY, timeout: 15000 })
   : null;
+
+// Get or create usage record for a user
+async function getUsage(userId) {
+  let result = await pool.query('SELECT * FROM ai_usage WHERE user_id = $1', [userId]);
+  if (result.rows.length === 0) {
+    result = await pool.query(
+      'INSERT INTO ai_usage (user_id) VALUES ($1) RETURNING *',
+      [userId]
+    );
+  }
+  const usage = result.rows[0];
+
+  // Reset period if new month
+  const periodStart = new Date(usage.period_start);
+  const now = new Date();
+  if (periodStart.getMonth() !== now.getMonth() || periodStart.getFullYear() !== now.getFullYear()) {
+    const reset = await pool.query(
+      `UPDATE ai_usage SET period_messages = 0, period_start = CURRENT_DATE, updated_at = NOW()
+       WHERE user_id = $1 RETURNING *`,
+      [userId]
+    );
+    return reset.rows[0];
+  }
+  return usage;
+}
 
 // Auto-delete messages older than 7 days
 async function cleanOldMessages(userId) {
@@ -48,6 +75,25 @@ exports.sendMessage = async (req, res, next) => {
 
     if (!message || !message.trim()) {
       return res.status(400).json({ error: 'Message is required' });
+    }
+
+    // Check AI usage limits
+    const usage = await getUsage(req.user.id);
+    const limit = usage.is_subscribed ? SUBSCRIBER_MESSAGE_LIMIT : FREE_MESSAGE_LIMIT;
+    const count = usage.is_subscribed ? usage.period_messages : usage.total_messages;
+
+    if (count >= limit) {
+      return res.status(403).json({
+        error: 'limit_reached',
+        message: usage.is_subscribed
+          ? 'You have reached your monthly AI message limit. Please wait for next month or upgrade.'
+          : 'You have used all your free AI messages. Subscribe to continue.',
+        usage: {
+          used: count,
+          limit,
+          isSubscribed: usage.is_subscribed,
+        },
+      });
     }
 
     // Clean messages older than 7 days
@@ -123,7 +169,66 @@ exports.sendMessage = async (req, res, next) => {
       [req.user.id, response.text]
     );
 
-    res.json(response);
+    // Increment usage counters
+    await pool.query(
+      `UPDATE ai_usage SET total_messages = total_messages + 1, period_messages = period_messages + 1, updated_at = NOW()
+       WHERE user_id = $1`,
+      [req.user.id]
+    );
+
+    // Return response with updated usage info
+    const updatedUsage = await getUsage(req.user.id);
+    const updatedLimit = updatedUsage.is_subscribed ? SUBSCRIBER_MESSAGE_LIMIT : FREE_MESSAGE_LIMIT;
+    const updatedCount = updatedUsage.is_subscribed ? updatedUsage.period_messages : updatedUsage.total_messages;
+
+    res.json({
+      ...response,
+      usage: {
+        used: updatedCount,
+        limit: updatedLimit,
+        isSubscribed: updatedUsage.is_subscribed,
+      },
+    });
+  } catch (err) {
+    next(err);
+  }
+};
+
+// GET /api/ai-coach/usage — get user's AI usage info
+exports.getUsage = async (req, res, next) => {
+  try {
+    const usage = await getUsage(req.user.id);
+    const limit = usage.is_subscribed ? SUBSCRIBER_MESSAGE_LIMIT : FREE_MESSAGE_LIMIT;
+    const count = usage.is_subscribed ? usage.period_messages : usage.total_messages;
+
+    res.json({
+      used: count,
+      limit,
+      remaining: Math.max(0, limit - count),
+      isSubscribed: usage.is_subscribed,
+      periodStart: usage.period_start,
+    });
+  } catch (err) {
+    next(err);
+  }
+};
+
+// POST /api/ai-coach/subscribe — mark user as subscribed (called after Superwall purchase)
+exports.subscribe = async (req, res, next) => {
+  try {
+    await pool.query(
+      `INSERT INTO ai_usage (user_id, is_subscribed, period_messages, period_start)
+       VALUES ($1, true, 0, CURRENT_DATE)
+       ON CONFLICT (user_id) DO UPDATE SET is_subscribed = true, period_messages = 0, period_start = CURRENT_DATE, updated_at = NOW()`,
+      [req.user.id]
+    );
+    res.json({
+      message: 'Subscription activated',
+      used: 0,
+      limit: SUBSCRIBER_MESSAGE_LIMIT,
+      remaining: SUBSCRIBER_MESSAGE_LIMIT,
+      isSubscribed: true,
+    });
   } catch (err) {
     next(err);
   }

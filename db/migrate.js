@@ -115,6 +115,18 @@ const migration = `
     UNIQUE(user_id, category_id)
   );
 
+  -- AI usage tracking
+  CREATE TABLE IF NOT EXISTS ai_usage (
+    id            UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    user_id       UUID UNIQUE NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    total_messages INTEGER NOT NULL DEFAULT 0,
+    period_messages INTEGER NOT NULL DEFAULT 0,
+    period_start   DATE NOT NULL DEFAULT CURRENT_DATE,
+    is_subscribed  BOOLEAN DEFAULT FALSE,
+    created_at    TIMESTAMPTZ DEFAULT NOW(),
+    updated_at    TIMESTAMPTZ DEFAULT NOW()
+  );
+
   -- Indexes
   CREATE INDEX IF NOT EXISTS idx_habits_user_id ON habits(user_id);
   CREATE INDEX IF NOT EXISTS idx_habit_completions_habit_id ON habit_completions(habit_id);
@@ -125,6 +137,7 @@ const migration = `
   CREATE INDEX IF NOT EXISTS idx_user_achievements_user_id ON user_achievements(user_id);
   CREATE INDEX IF NOT EXISTS idx_user_categories_user_id ON user_categories(user_id);
   CREATE INDEX IF NOT EXISTS idx_categories_active ON categories(is_active);
+  CREATE INDEX IF NOT EXISTS idx_ai_usage_user_id ON ai_usage(user_id);
 `;
 
 async function migrate() {
