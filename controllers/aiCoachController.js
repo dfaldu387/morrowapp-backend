@@ -91,6 +91,7 @@ exports.sendMessage = async (req, res, next) => {
         usage: {
           used: count,
           limit,
+          remaining: 0,
           isSubscribed: usage.is_subscribed,
         },
       });
@@ -186,6 +187,7 @@ exports.sendMessage = async (req, res, next) => {
       usage: {
         used: updatedCount,
         limit: updatedLimit,
+        remaining: Math.max(0, updatedLimit - updatedCount),
         isSubscribed: updatedUsage.is_subscribed,
       },
     });
