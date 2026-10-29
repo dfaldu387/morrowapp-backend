@@ -1,6 +1,12 @@
 const pool = require('../config/database');
+const OpenAI = require('openai');
 
 const HISTORY_RETENTION_DAYS = 7;
+
+// Initialize OpenAI client (only if API key is configured)
+const openai = process.env.OPENAI_API_KEY
+  ? new OpenAI({ apiKey: process.env.OPENAI_API_KEY, timeout: 15000 })
+  : null;
 
 // Auto-delete messages older than 7 days
 async function cleanOldMessages(userId) {
@@ -77,8 +83,39 @@ exports.sendMessage = async (req, res, next) => {
       completedDates: completions.filter(c => c.habit_id === h.id).map(c => c.completed_date),
     }));
 
-    // Generate AI response (full context-aware engine)
-    const response = generateResponse(message, habitData);
+    // Get user's selected interest categories (graceful if tables don't exist yet)
+    let selectedCategories = [];
+    try {
+      const userCatsResult = await pool.query(
+        `SELECT c.name, c.emoji FROM categories c
+         INNER JOIN user_categories uc ON uc.category_id = c.id
+         WHERE uc.user_id = $1 ORDER BY c.sort_order`,
+        [req.user.id]
+      );
+      selectedCategories = userCatsResult.rows;
+    } catch (e) {
+      // categories tables may not exist yet — continue without them
+    }
+
+    // Get recent chat history for OpenAI context
+    const chatHistory = await pool.query(
+      'SELECT message, is_user FROM ai_chat_messages WHERE user_id = $1 ORDER BY created_at DESC LIMIT 20',
+      [req.user.id]
+    );
+    const recentMessages = chatHistory.rows.reverse();
+
+    // Try OpenAI first, fallback to local rule-based engine
+    let response;
+    if (openai) {
+      try {
+        response = await generateOpenAIResponse(message, habitData, recentMessages, selectedCategories);
+      } catch (err) {
+        console.error('[AI Coach] OpenAI failed, falling back to local engine:', err.message);
+        response = generateResponse(message, habitData);
+      }
+    } else {
+      response = generateResponse(message, habitData);
+    }
 
     // Save AI response
     await pool.query(
@@ -87,6 +124,40 @@ exports.sendMessage = async (req, res, next) => {
     );
 
     res.json(response);
+  } catch (err) {
+    next(err);
+  }
+};
+
+// GET /api/ai-coach/suggestions — dynamic quick-reply suggestions
+exports.getSuggestions = async (req, res, next) => {
+  try {
+    const habits = await pool.query('SELECT * FROM habits WHERE user_id = $1 AND archived = false', [req.user.id]);
+    const habitIds = habits.rows.map(h => h.id);
+
+    let completions = [];
+    if (habitIds.length > 0) {
+      const compResult = await pool.query(
+        'SELECT habit_id, completed_date::text FROM habit_completions WHERE habit_id = ANY($1)',
+        [habitIds]
+      );
+      completions = compResult.rows;
+    }
+
+    const today = formatDate(new Date());
+    const active = habits.rows;
+    const completed = active.filter(h =>
+      completions.filter(c => c.habit_id === h.id).some(c => c.completed_date === today)
+    );
+    const remaining = active.length - completed.length;
+
+    const suggestions = ['How am I doing?'];
+    if (remaining > 0) suggestions.push("What's the easiest habit?");
+    if (active.length > 0) suggestions.push('Give me motivation');
+    if (active.length < 5) suggestions.push('Suggest a habit');
+    suggestions.push('Tips to improve');
+
+    res.json({ suggestions: suggestions.slice(0, 4) });
   } catch (err) {
     next(err);
   }
@@ -102,7 +173,116 @@ exports.clearHistory = async (req, res, next) => {
   }
 };
 
-// --- Full context-aware response engine ---
+// --- OpenAI-powered response engine ---
+
+function buildSystemPrompt(habitData, selectedCategories) {
+  const today = formatDate(new Date());
+  const hour = new Date().getHours();
+  const timeOfDay = hour < 12 ? 'morning' : hour < 17 ? 'afternoon' : 'evening';
+
+  const habitCategories = [...new Set(habitData.map(h => h.category).filter(Boolean))];
+  const interestCategories = selectedCategories.map(c => `${c.emoji} ${c.name}`);
+  const allCategoryNames = [...new Set([
+    ...selectedCategories.map(c => c.name),
+    ...habitCategories,
+  ])];
+
+  const habitSummaries = habitData.map(h => {
+    const streak = getStreakInfo(h.completedDates);
+    const completedToday = h.completedDates.includes(today);
+    return `- ${h.emoji} ${h.name} (Category: ${h.category}, Routine: ${h.routine}, Current streak: ${streak.current}d, Best streak: ${streak.longest}d, Total completions: ${streak.total}, Today: ${completedToday ? 'Done' : 'Not done'})`;
+  });
+
+  const completedToday = habitData.filter(h => h.completedDates.includes(today));
+  const remainingToday = habitData.filter(h => !h.completedDates.includes(today));
+
+  let totalCompletions = 0;
+  let bestStreak = 0;
+  habitData.forEach(h => {
+    const info = getStreakInfo(h.completedDates);
+    totalCompletions += info.total;
+    if (info.current > bestStreak) bestStreak = info.current;
+  });
+
+  return `You are Ducky, an expert AI habit coach inside the Morrow habit tracker app. You are warm, encouraging, knowledgeable about habit science (James Clear's Atomic Habits, BJ Fogg's Tiny Habits, behavioral psychology), and concise.
+
+CURRENT CONTEXT:
+- Date: ${today} (${timeOfDay})
+- User's interest categories (selected during onboarding): ${interestCategories.length > 0 ? interestCategories.join(', ') : 'None selected'}
+- Categories with active habits: ${habitCategories.length > 0 ? habitCategories.join(', ') : 'None yet'}
+- Total active habits: ${habitData.length}
+- Completed today: ${completedToday.length}/${habitData.length}
+- Remaining today: ${remainingToday.length}
+- Overall best streak: ${bestStreak} days
+- All-time completions: ${totalCompletions}
+
+USER'S HABITS:
+${habitSummaries.length > 0 ? habitSummaries.join('\n') : 'No habits set up yet.'}
+
+GUIDELINES:
+1. Use the user's ACTUAL habit data and categories to give personalized advice. Reference their specific habits by name and emoji.
+2. When suggesting NEW habits, prioritize the user's interest categories (${allCategoryNames.join(', ') || 'none yet'}). Especially suggest habits for interest categories where they don't have any habits yet. Don't suggest habits they already have.
+3. Keep responses concise (2-4 short paragraphs max). Use **bold** for emphasis.
+4. When giving stats, use the real numbers from the context above.
+5. If the user asks to suggest habits, return a JSON block at the END of your response in this exact format (after your text response):
+   |||SUGGESTIONS|||[{"name":"Habit Name","emoji":"emoji"}]|||END|||
+   Only include 2-3 suggestions that match the user's interest categories and don't duplicate existing habits.
+6. Be encouraging but honest. If they're struggling, empathize and give actionable advice.
+7. Never invent or fabricate data. Only reference habits and stats provided in the context.
+8. For greetings, keep it brief and mention their progress status.`;
+}
+
+async function generateOpenAIResponse(userMessage, habitData, recentMessages, selectedCategories) {
+  const systemPrompt = buildSystemPrompt(habitData, selectedCategories);
+
+  const messages = [{ role: 'system', content: systemPrompt }];
+
+  for (const msg of recentMessages.slice(0, -1)) {
+    messages.push({
+      role: msg.is_user ? 'user' : 'assistant',
+      content: msg.message,
+    });
+  }
+
+  messages.push({ role: 'user', content: userMessage });
+
+  const completion = await openai.chat.completions.create({
+    model: 'gpt-4o-mini',
+    messages,
+    max_tokens: 500,
+    temperature: 0.7,
+  });
+
+  const rawText = (completion.choices[0].message.content || '').trim();
+
+  if (!rawText) {
+    throw new Error('Empty response from OpenAI');
+  }
+
+  const suggestionsMatch = rawText.match(/\|\|\|SUGGESTIONS\|\|\|(.+?)\|\|\|END\|\|\|/s);
+  let text = rawText;
+  let suggestions = undefined;
+
+  if (suggestionsMatch) {
+    text = rawText.replace(/\|\|\|SUGGESTIONS\|\|\|.+?\|\|\|END\|\|\|/s, '').trim();
+    try {
+      const parsed = JSON.parse(suggestionsMatch[1]);
+      if (Array.isArray(parsed)) {
+        suggestions = parsed.map((s, i) => ({ id: `s${i}`, name: s.name, emoji: s.emoji }));
+      }
+    } catch (e) {
+      // Ignore parse errors, just return text
+    }
+  }
+
+  const result = { text };
+  if (suggestions && suggestions.length > 0) {
+    result.suggestions = suggestions;
+  }
+  return result;
+}
+
+// --- Full context-aware response engine (fallback) ---
 
 function pickRandom(arr) {
   return arr[Math.floor(Math.random() * arr.length)];
