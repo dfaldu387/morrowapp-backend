@@ -155,7 +155,7 @@ exports.sendMessage = async (req, res, next) => {
     let response;
     if (openai) {
       try {
-        response = await generateOpenAIResponse(message, habitData, recentMessages, selectedCategories);
+        response = await generateOpenAIResponse(message, habitData, recentMessages, selectedCategories, req.user.id);
       } catch (err) {
         console.error('[AI Coach] OpenAI failed, falling back to local engine:', err.message);
         response = generateResponse(message, habitData);
@@ -339,7 +339,7 @@ GUIDELINES:
 8. For greetings, keep it brief and mention their progress status.`;
 }
 
-async function generateOpenAIResponse(userMessage, habitData, recentMessages, selectedCategories) {
+async function generateOpenAIResponse(userMessage, habitData, recentMessages, selectedCategories, userId) {
   const systemPrompt = buildSystemPrompt(habitData, selectedCategories);
 
   const messages = [{ role: 'system', content: systemPrompt }];
@@ -353,12 +353,31 @@ async function generateOpenAIResponse(userMessage, habitData, recentMessages, se
 
   messages.push({ role: 'user', content: userMessage });
 
+  const model = 'gpt-4o-mini';
   const completion = await openai.chat.completions.create({
-    model: 'gpt-4o-mini',
+    model,
     messages,
     max_tokens: 500,
     temperature: 0.7,
   });
+
+  // Track token usage
+  if (completion.usage) {
+    const promptTokens = completion.usage.prompt_tokens || 0;
+    const completionTokens = completion.usage.completion_tokens || 0;
+    const totalTokens = completion.usage.total_tokens || 0;
+    // GPT-4o-mini pricing: $0.15/1M input, $0.60/1M output
+    const cost = (promptTokens * 0.00000015) + (completionTokens * 0.0000006);
+    try {
+      await pool.query(
+        `INSERT INTO token_usage (user_id, prompt_tokens, completion_tokens, total_tokens, model, cost)
+         VALUES ($1, $2, $3, $4, $5, $6)`,
+        [userId, promptTokens, completionTokens, totalTokens, model, cost]
+      );
+    } catch (e) {
+      console.error('[AI Coach] Failed to save token usage:', e.message);
+    }
+  }
 
   const rawText = (completion.choices[0].message.content || '').trim();
 

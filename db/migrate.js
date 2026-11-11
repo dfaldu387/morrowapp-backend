@@ -127,6 +127,18 @@ const migration = `
     updated_at    TIMESTAMPTZ DEFAULT NOW()
   );
 
+  -- Token usage tracking (OpenAI costs per message)
+  CREATE TABLE IF NOT EXISTS token_usage (
+    id              UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    user_id         UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    prompt_tokens   INTEGER NOT NULL DEFAULT 0,
+    completion_tokens INTEGER NOT NULL DEFAULT 0,
+    total_tokens    INTEGER NOT NULL DEFAULT 0,
+    model           VARCHAR(50) NOT NULL DEFAULT 'gpt-4o-mini',
+    cost            DECIMAL(10,6) NOT NULL DEFAULT 0,
+    created_at      TIMESTAMPTZ DEFAULT NOW()
+  );
+
   -- Indexes
   CREATE INDEX IF NOT EXISTS idx_habits_user_id ON habits(user_id);
   CREATE INDEX IF NOT EXISTS idx_habit_completions_habit_id ON habit_completions(habit_id);
@@ -138,6 +150,8 @@ const migration = `
   CREATE INDEX IF NOT EXISTS idx_user_categories_user_id ON user_categories(user_id);
   CREATE INDEX IF NOT EXISTS idx_categories_active ON categories(is_active);
   CREATE INDEX IF NOT EXISTS idx_ai_usage_user_id ON ai_usage(user_id);
+  CREATE INDEX IF NOT EXISTS idx_token_usage_user_id ON token_usage(user_id);
+  CREATE INDEX IF NOT EXISTS idx_token_usage_created_at ON token_usage(created_at);
 `;
 
 async function migrate() {
