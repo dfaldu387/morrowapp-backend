@@ -43,13 +43,6 @@ app.get('/api/health', (req, res) => {
   res.json({ status: 'ok', timestamp: new Date().toISOString() });
 });
 
-// Temp: reset all subs
-app.post('/api/reset-all-subs', async (req, res) => {
-  const p = require('./config/database');
-  const r = await p.query("UPDATE ai_usage SET is_subscribed = false WHERE is_subscribed = true RETURNING user_id");
-  res.json({ reset: r.rowCount, users: r.rows.map(r => r.user_id) });
-});
-
 // Error handler
 app.use(errorHandler);
 
