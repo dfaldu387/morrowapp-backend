@@ -232,6 +232,19 @@ exports.updateSubscription = async (req, res, next) => {
   }
 };
 
+// POST /api/admin/reset-subscriptions — reset all subscriptions
+exports.resetSubscriptions = async (req, res, next) => {
+  try {
+    const result = await pool.query(
+      `UPDATE ai_usage SET is_subscribed = false, updated_at = NOW() WHERE is_subscribed = true RETURNING user_id`
+    );
+    console.log(`[Admin] Reset ${result.rowCount} subscriptions`);
+    res.json({ message: `Reset ${result.rowCount} subscriptions`, count: result.rowCount });
+  } catch (err) {
+    next(err);
+  }
+};
+
 // GET /api/admin/token-usage — aggregated token usage
 exports.getTokenUsage = async (req, res, next) => {
   try {
