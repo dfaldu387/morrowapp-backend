@@ -3,6 +3,10 @@ const pool = require('../config/database');
 
 const ADMIN_JWT_SECRET = process.env.ADMIN_JWT_SECRET || process.env.JWT_SECRET + '_admin';
 
+if (!process.env.ADMIN_JWT_SECRET) {
+  console.warn('WARNING: ADMIN_JWT_SECRET not set. Using derived secret from JWT_SECRET. Set ADMIN_JWT_SECRET in environment for production security.');
+}
+
 async function adminAuth(req, res, next) {
   const header = req.headers.authorization;
   if (!header || !header.startsWith('Bearer ')) {

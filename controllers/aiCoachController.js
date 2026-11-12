@@ -1,5 +1,8 @@
 const pool = require('../config/database');
 const OpenAI = require('openai');
+const crypto = require('crypto');
+
+const subscribeNonces = new Map(); // userId -> { nonce, expiresAt }
 
 const HISTORY_RETENTION_DAYS = 7;
 const FREE_MESSAGE_LIMIT = 5;
@@ -80,7 +83,7 @@ exports.sendMessage = async (req, res, next) => {
     // Check AI usage limits
     const usage = await getUsage(req.user.id);
     const limit = usage.is_subscribed ? SUBSCRIBER_MESSAGE_LIMIT : FREE_MESSAGE_LIMIT;
-    const count = usage.is_subscribed ? usage.period_messages : usage.total_messages;
+    const count = usage.period_messages;
 
     if (count >= limit) {
       return res.status(403).json({
@@ -180,7 +183,7 @@ exports.sendMessage = async (req, res, next) => {
     // Return response with updated usage info
     const updatedUsage = await getUsage(req.user.id);
     const updatedLimit = updatedUsage.is_subscribed ? SUBSCRIBER_MESSAGE_LIMIT : FREE_MESSAGE_LIMIT;
-    const updatedCount = updatedUsage.is_subscribed ? updatedUsage.period_messages : updatedUsage.total_messages;
+    const updatedCount = updatedUsage.period_messages;
 
     res.json({
       ...response,
@@ -201,7 +204,7 @@ exports.getUsage = async (req, res, next) => {
   try {
     const usage = await getUsage(req.user.id);
     const limit = usage.is_subscribed ? SUBSCRIBER_MESSAGE_LIMIT : FREE_MESSAGE_LIMIT;
-    const count = usage.is_subscribed ? usage.period_messages : usage.total_messages;
+    const count = usage.period_messages;
 
     res.json({
       used: count,
@@ -215,14 +218,34 @@ exports.getUsage = async (req, res, next) => {
   }
 };
 
+// GET /api/ai-coach/subscribe-nonce — generate a nonce for subscribe endpoint
+exports.getSubscribeNonce = async (req, res, next) => {
+  try {
+    const nonce = crypto.randomBytes(32).toString('hex');
+    subscribeNonces.set(req.user.id, { nonce, expiresAt: Date.now() + 5 * 60 * 1000 });
+    res.json({ nonce });
+  } catch (err) {
+    next(err);
+  }
+};
+
 // POST /api/ai-coach/subscribe — mark user as subscribed (called after Superwall purchase)
 exports.subscribe = async (req, res, next) => {
   try {
-    const { productId } = req.body;
+    const { productId, nonce } = req.body;
 
     if (!productId) {
       return res.status(400).json({ error: 'productId is required' });
     }
+    if (!nonce) {
+      return res.status(400).json({ error: 'nonce is required' });
+    }
+
+    const stored = subscribeNonces.get(req.user.id);
+    if (!stored || stored.nonce !== nonce || Date.now() > stored.expiresAt) {
+      return res.status(403).json({ error: 'Invalid or expired subscription token' });
+    }
+    subscribeNonces.delete(req.user.id);
 
     await pool.query(
       `INSERT INTO ai_usage (user_id, is_subscribed, period_messages, period_start, updated_at)
@@ -262,7 +285,7 @@ exports.unsubscribe = async (req, res, next) => {
 
     const updatedUsage = await getUsage(req.user.id);
     const limit = FREE_MESSAGE_LIMIT;
-    const count = updatedUsage.total_messages;
+    const count = updatedUsage.period_messages;
 
     res.json({
       used: count,
