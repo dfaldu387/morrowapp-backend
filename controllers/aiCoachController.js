@@ -218,18 +218,57 @@ exports.getUsage = async (req, res, next) => {
 // POST /api/ai-coach/subscribe — mark user as subscribed (called after Superwall purchase)
 exports.subscribe = async (req, res, next) => {
   try {
+    const { productId } = req.body;
+
+    if (!productId) {
+      return res.status(400).json({ error: 'productId is required' });
+    }
+
     await pool.query(
-      `INSERT INTO ai_usage (user_id, is_subscribed, period_messages, period_start)
-       VALUES ($1, true, 0, CURRENT_DATE)
+      `INSERT INTO ai_usage (user_id, is_subscribed, period_messages, period_start, updated_at)
+       VALUES ($1, true, 0, CURRENT_DATE, NOW())
        ON CONFLICT (user_id) DO UPDATE SET is_subscribed = true, period_messages = 0, period_start = CURRENT_DATE, updated_at = NOW()`,
       [req.user.id]
     );
+
+    console.log(`[Subscribe] User ${req.user.id} subscribed with product: ${productId}`);
+
     res.json({
       message: 'Subscription activated',
       used: 0,
       limit: SUBSCRIBER_MESSAGE_LIMIT,
       remaining: SUBSCRIBER_MESSAGE_LIMIT,
       isSubscribed: true,
+    });
+  } catch (err) {
+    next(err);
+  }
+};
+
+// POST /api/ai-coach/unsubscribe — mark user as unsubscribed (called when Superwall subscription expires)
+exports.unsubscribe = async (req, res, next) => {
+  try {
+    const usage = await getUsage(req.user.id);
+    const wasSubscribed = usage.is_subscribed;
+
+    await pool.query(
+      `UPDATE ai_usage SET is_subscribed = false, updated_at = NOW() WHERE user_id = $1`,
+      [req.user.id]
+    );
+
+    if (wasSubscribed) {
+      console.log(`[Unsubscribe] User ${req.user.id} subscription expired`);
+    }
+
+    const updatedUsage = await getUsage(req.user.id);
+    const limit = FREE_MESSAGE_LIMIT;
+    const count = updatedUsage.total_messages;
+
+    res.json({
+      used: count,
+      limit,
+      remaining: Math.max(0, limit - count),
+      isSubscribed: false,
     });
   } catch (err) {
     next(err);
