@@ -43,6 +43,17 @@ app.get('/api/health', (req, res) => {
   res.json({ status: 'ok', timestamp: new Date().toISOString() });
 });
 
+// Temporary: reset all subscriptions (REMOVE after use)
+app.post('/api/reset-all-subs', async (req, res) => {
+  try {
+    const pool = require('./config/database');
+    const result = await pool.query('UPDATE ai_usage SET is_subscribed = false, updated_at = NOW() WHERE is_subscribed = true RETURNING user_id');
+    res.json({ reset: result.rowCount });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
 // Error handler
 app.use(errorHandler);
 
